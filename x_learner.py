@@ -102,7 +102,7 @@ class Xlearner(BaseModel):
                     
         return torch.cat(ate, dim=1) if len(ate) !=0 else None,[y_preds,uplift_preds],None
 
-def xlearn_loss(y_preds,t, y_true,task='regression',loss_type=None,classi_nums=2, treatment_label_list=None,X_true=None):
+def xlearn_loss(y_preds,t, y_true,task='regression',loss_type=None,classi_nums=2, treatment_label_list=None,X_true=None,**kwargs):
     if task is None:
         raise ValueError("task must be 'classification' or 'regression'")
     
@@ -116,6 +116,8 @@ def xlearn_loss(y_preds,t, y_true,task='regression',loss_type=None,classi_nums=2
     elif task == 'regression':
         if loss_type == 'mse':
             criterion = nn.MSELoss()
+        elif loss_type == 'mae':
+            criterion = nn.L1Loss(reduction='mean')
         elif loss_type =='huberloss':
             criterion = nn.SmoothL1Loss() 
         else:

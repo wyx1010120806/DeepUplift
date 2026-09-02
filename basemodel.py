@@ -50,18 +50,12 @@ class BaseModel(nn.Module):
         if result.returncode != 0:
             print(f"Error listing files in HDFS: {result.stderr}")
 
-<<<<<<< HEAD
     def save_checkpoint(self,model, optimizer, epoch, filepath):
         model_save_name = Path(filepath).name
 
         p = urlparse(filepath)
         parent_path = p.path.rsplit('/', 1)[0]  
         filepath_ = urlunparse((p.scheme, p.netloc, parent_path, '', '', ''))
-=======
-    def save_checkpoint(self,model, optimizer, epoch, filepath='checkpoint.pth'):
-        base, ext = filepath.rsplit('.', 1)  # 分割文件名和扩展名
-        new_filepath = f"{base}.{ext}"
->>>>>>> 826c247f38bae0757a3143a60e371439b65cb42c
 
         torch.save({
             'epoch': epoch,
@@ -118,7 +112,7 @@ class BaseModel(nn.Module):
                 print("预计单epoch训练步数:",int(df.shape[0]/batch_size))
 
     def fit(self, df,feature_list,discrete_cols,batch_size=64, epochs=10,
-            learning_rate=1e-5,uplift_loss_f=None,loss_f=None,loss_f_eps=(), tensorboard=False,num_workers=4,pin_memory=True,task=None,device=None, valid_perc=False,label_y=None,label_treatment=None,loss_type=None,classi_nums=2, treatment_label_list=None,checkpoint_path=None,if_continued_train=0, max_runtime_hours=23.5
+            learning_rate=1e-5,uplift_loss_f=None,loss_f=None,loss_f_eps=(), tensorboard=False,num_workers=4,pin_memory=True,task=None,device=None, valid_perc=False,label_y=None,label_treatment=None,loss_type=None,classi_nums=2, treatment_label_list=None,checkpoint_path=None,if_continued_train=0, max_runtime_hours=48,**kwargs
             ):
 
         self.set_seed(42)
@@ -134,7 +128,7 @@ class BaseModel(nn.Module):
             print(f'剩余{epochs}')
         
         self.create_dataloaders(df=df,feature_list=feature_list, discrete_cols=discrete_cols,batch_size=batch_size,num_workers=num_workers, pin_memory=pin_memory,valid_perc=valid_perc,label_y=label_y,label_treatment=label_treatment)
-        early_stopper = EarlyStopper(patience=10, min_delta=0)
+        early_stopper = EarlyStopper(patience=5, min_delta=0)
         # scheduler = lr_scheduler.ReduceLROnPlateau(optim, mode='min', patience=5, factor=0.1, verbose=True)
 
         # 记录训练开始时间
@@ -169,7 +163,7 @@ class BaseModel(nn.Module):
 
                 # print(f"back time: {time.time() - start:.4f}s")
                 # start_time = time.time()
-                loss, loss_control, loss_treat = loss_f(y_preds,tr, y1,task,loss_type,classi_nums, treatment_label_list,eps[0])
+                loss, loss_control, loss_treat = loss_f(y_preds,tr, y1,task,loss_type,classi_nums, treatment_label_list,eps[0],**kwargs)
                 # end_time = time.time()
                 # print(f"epoch time: {end_time - start_time:.4f}s")
         
@@ -206,7 +200,7 @@ class BaseModel(nn.Module):
                     
                     t_pred,y_preds,*eps = self.predict(X_valid,tr_valid,device,X_discrete_valid, X_continuous_valid)
 
-                    loss, outcome_loss, treatment_loss = loss_f(y_preds,tr_valid, y1_valid,task,loss_type,classi_nums, treatment_label_list,eps[0])
+                    loss, outcome_loss, treatment_loss = loss_f(y_preds,tr_valid, y1_valid,task,loss_type,classi_nums, treatment_label_list,eps[0],**kwargs)
                     if uplift_loss_f:
                         treatment_loss = uplift_loss_f(t_pred, y_preds,tr_valid, y1_valid, *loss_f_eps)
                         treatment_valid.append(treatment_loss)

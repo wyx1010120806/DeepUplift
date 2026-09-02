@@ -106,7 +106,13 @@ class Descn(BaseModel):
                     base_predcit_pro = predcit_pro
 
             #计算每个样本划入指定treatment的概率
-            ipw_score = treatment_proba[:,treatment_label].squeeze().unsqueeze(1)
+            if len(self.treatment_label_list) == 2:
+                if treatment_label == 1:
+                    ipw_score = treatment_proba[:,0].squeeze().unsqueeze(1)
+                else:
+                    ipw_score = 1 - treatment_proba[:,0].squeeze().unsqueeze(1)
+            else:
+                ipw_score = treatment_proba[:,treatment_label].squeeze().unsqueeze(1)
 
             #计算每个样本指定treatment下的伪响应概率
             if treatment_label !=0 :
@@ -128,7 +134,7 @@ class Descn(BaseModel):
         # ipw (batch_size,treatment_nums)
         return torch.cat(ite, dim=1) if len(ite) !=0 else None,[pre,pseudo,ipw],None
 
-def descn_loss(y_preds,t, y_true,task='classification',loss_type=None,classi_nums=2, treatment_label_list=None,X_true=None):
+def descn_loss(y_preds,t, y_true,task='classification',loss_type=None,classi_nums=2, treatment_label_list=None,X_true=None,**kwargs):
     if task is None:
         raise ValueError("task must be 'classification'")
 
@@ -150,7 +156,7 @@ def descn_loss(y_preds,t, y_true,task='classification',loss_type=None,classi_num
     # loss ipw
     if len(treatment_label_list) == 2:
         ipw_criterion = nn.BCEWithLogitsLoss()
-        loss_ipw = ipw_criterion(ipw, t)
+        loss_ipw = ipw_criterion(ipw, t.float())
 
     if len(treatment_label_list) > 2: 
         ipw_criterion = nn.CrossEntropyLoss()
@@ -167,6 +173,8 @@ def descn_loss(y_preds,t, y_true,task='classification',loss_type=None,classi_num
     elif task == 'regression':
         if loss_type == 'mse':
             criterion = nn.MSELoss()
+        elif loss_type == 'mae':
+            criterion = nn.L1Loss(reduction='mean')
         elif loss_type =='huberloss':
             criterion = nn.SmoothL1Loss() 
         else:

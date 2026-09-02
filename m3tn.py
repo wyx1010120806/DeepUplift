@@ -3,16 +3,18 @@ import torch
 from basemodel import BaseModel
 from baseunit import TowerUnit
 
-class Cfrnet(BaseModel):
-    def __init__(self, input_dim=100,discrete_size_cols=[2,3,4,5,2],embedding_dim=64,share_dim=6,
-                 share_hidden_dims =[64,64,64,64,64],
-                 base_hidden_dims=[100,100,100,100],output_activation_base=torch.nn.Sigmoid(),
-                 share_hidden_func = torch.nn.ELU(),base_hidden_func = torch.nn.ELU(),
+class M3tn(BaseModel):
+    def __init__(self, input_dim=100,discrete_size_cols=[2,3,4,5,2],embedding_dim=64,expert_dim=6,
+                 expert_hidden_dims =[[64,64,64,64,64],[64,64,64,64,64],[64,64,64,64,64],[64,64,64,64,64],[64,64,64,64,64]],expert_hidden_func = torch.nn.ELU(),
+                 gate_hidden_dims =[[128],[128],[128],[128]],gate_hidden_func = torch.nn.ELU(),
+                 base_hidden_dims=[100,100,100,100],output_activation_base=torch.nn.Sigmoid(),base_hidden_func = torch.nn.ELU(),
                  task = 'classification',classi_nums=2, treatment_label_list=[0,1,2,3],model_type='Tarnet',device='cpu'):
-        super(Cfrnet, self).__init__()
+        super(M3tn, self).__init__()
         self.model_type = model_type
         self.layers = []
         self.treatment_nums = len(treatment_label_list)
+        self.expert = nn.ModuleList()
+        self.gate = nn.ModuleDict()
         self.treatment_model = nn.ModuleDict()
         self.treatment_label_list = treatment_label_list
         input_dim = input_dim - len(discrete_size_cols) + len(discrete_size_cols)*embedding_dim
@@ -22,22 +24,39 @@ class Cfrnet(BaseModel):
             nn.Embedding(size, embedding_dim).to(device) for size in discrete_size_cols
         ]).to(device)
         
-        # share tower
-        self.share_tower = TowerUnit(input_dim = input_dim, 
-                 hidden_dims=share_hidden_dims, 
-                 share_output_dim=share_dim, 
-                 activation=share_hidden_func, 
+        # expert tower
+        for layer in expert_hidden_dims:
+            self.expert.append(TowerUnit(input_dim = input_dim, 
+                    hidden_dims=layer, 
+                    share_output_dim=expert_dim, 
+                    activation=expert_hidden_func, 
+                    use_batch_norm=True, 
+                    use_dropout=True, 
+                    dropout_rate=0.3, 
+                    task='share', 
+                    classi_nums=None, 
+                    device=device, 
+                    use_xavier=True))
+        
+        # gate tower
+        for treatment_label in self.treatment_label_list:
+            self.gate[str(treatment_label)] = TowerUnit(input_dim = input_dim, 
+                 hidden_dims=gate_hidden_dims[treatment_label], 
+                 share_output_dim=None, 
+                 activation=gate_hidden_func, 
                  use_batch_norm=True, 
                  use_dropout=True, 
                  dropout_rate=0.3, 
-                 task='share', 
-                 classi_nums=None, 
+                 task="classification", 
+                 classi_nums=len(expert_hidden_dims), 
+                 output_activation=None,
                  device=device, 
                  use_xavier=True)
 
+
         for treatment_label in self.treatment_label_list:
             # treatment tower
-            self.treatment_model[str(treatment_label)] = TowerUnit(input_dim = share_dim, 
+            self.treatment_model[str(treatment_label)] = TowerUnit(input_dim = expert_dim, 
                  hidden_dims=base_hidden_dims, 
                  share_output_dim=None, 
                  activation=base_hidden_func, 
@@ -55,64 +74,46 @@ class Cfrnet(BaseModel):
         X_discrete_emb = torch.cat(embedded, dim=1)  # 拼接所有embedding
         x = torch.cat((X_continuous,X_discrete_emb), dim=1)
 
-        share_out = self.share_tower(x)
+        # 专家网络
+        expert_out_list = []
+        for expert_ in self.expert:
+            expert_out_list.append(expert_(x))
+        expert_out = torch.stack(expert_out_list, dim=1)
 
         pre = []
         ate = []
 
+        # 门网络+输入塔
         for treatment_label in self.treatment_label_list:
-            predcit_pro = self.treatment_model[str(treatment_label)](share_out).squeeze().unsqueeze(1)
+            gate_out = self.gate[str(treatment_label)](x)
+            predict_input = (expert_out * gate_out[:, :, None]).sum(dim=1)
+
+            predcit_pro = self.treatment_model[str(treatment_label)](predict_input).squeeze().unsqueeze(1)
             pre.append(predcit_pro)
+            if treatment_label !=0:
+                ate.append(predcit_pro)
 
-        if not self.training:
-            base_predcit_pro = self.treatment_model['0'](share_out).squeeze().unsqueeze(1)
-            for treatment_label in self.treatment_label_list:
-                predcit_pro = self.treatment_model[str(treatment_label)](share_out).squeeze().unsqueeze(1)
-                if treatment_label != 0:
-                    ate.append(predcit_pro -base_predcit_pro)
-        return torch.cat(ate, dim=1) if len(ate) !=0 else None,pre,share_out
+        return torch.cat(ate, dim=1) if len(ate) !=0 else None,pre,None
 
-def gaussian_kernel(x, y, sigma=1.0):
-    """
-    计算RBF核矩阵
-    x: [n, d]
-    y: [m, d]
-    """
-    x = x.unsqueeze(1)  # [n, 1, d]
-    y = y.unsqueeze(0)  # [1, m, d]
-    diff = x - y        # [n, m, d]
-    dist_sq = (diff ** 2).sum(-1)  # [n, m]
-    return torch.exp(-dist_sq / (2 * sigma ** 2))
-
-def mmd_rbf(x, y, sigma=1.0):
-    """
-    计算两个样本集合x和y的MMD^2（RBF核）
-    x: [n, d]
-    y: [m, d]
-    """
-    K_xx = gaussian_kernel(x, x, sigma)
-    K_yy = gaussian_kernel(y, y, sigma)
-    K_xy = gaussian_kernel(x, y, sigma)
-    mmd = K_xx.mean() + K_yy.mean() - 2 * K_xy.mean()
-    return mmd
-
-def cfrnet_loss(y_preds,t, y_true,task='regression',loss_type=None,classi_nums=2, treatment_label_list=None,X_true=None,**kwargs):
+def m3tn_loss(y_preds,t, y_true,task='regression',loss_type=None,classi_nums=2, treatment_label_list=None,X_true=None,**kwargs):
     if task is None:
         raise ValueError("task must be 'classification' or 'regression'")
 
     t = t.squeeze().unsqueeze(1).long()
     y_true = y_true.squeeze().unsqueeze(1)
+    y_0 = y_preds[0].squeeze().unsqueeze(1)
     y_pred = torch.gather(torch.cat(y_preds, dim=1), dim=1, index=t.long()).squeeze().unsqueeze(1)
 
     y_true_dict = {}
     y_pred_dict = {}
-    x_true_dict = {}
+    y_0_dict = {}
     for treatment in treatment_label_list:
         mask = (t == treatment)
         y_true_dict[treatment] = y_true[mask]
         y_pred_dict[treatment] = y_pred[mask]
-        x_true_dict[treatment] = X_true[mask]
-        
+        if treatment != 0:
+            y_0_dict[treatment] = y_0[mask]
+
     # 计算每个treatment的损失
     if task == 'classification':
         if loss_type == 'BCEWithLogitsLoss':
@@ -132,17 +133,14 @@ def cfrnet_loss(y_preds,t, y_true,task='regression',loss_type=None,classi_nums=2
             raise ValueError("loss_type must be 'mse' or 'huberloss'")
     else:
         raise ValueError("task must be 'classification' or'regression'")
-    
+
     loss_treat = 0
     for treatment in treatment_label_list:
-        loss_treat += criterion(y_pred_dict[treatment], y_true_dict[treatment])
-
-    loss_mmd = 0
-    for treatment in treatment_label_list:
-        if treatment!= 0:
-            loss_mmd += mmd_rbf(x_true_dict[treatment], x_true_dict[0])
-
-    loss = loss_treat + loss_mmd
+        if treatment == 0:
+            loss_treat += criterion(y_pred_dict[treatment], y_true_dict[treatment])
+        else:
+            loss_treat += criterion(y_0_dict[treatment] + y_pred_dict[treatment], y_true_dict[treatment])
+    loss = loss_treat
     return loss, loss_treat, None
 
 

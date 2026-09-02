@@ -1,0 +1,32 @@
+// More see: https://bytedance.feishu.cn/wiki/wikcn0JLoqooqhOwC3GLPheK9th
+// If you want to modify the file:
+//   1. When Take Effect is effective 📌 (after re-init), you must click `Run Development Environment Initialization` to take effect
+//   2. When Take Effect is // effective 🆕 (in new workspaces), you must push this file change to repository, and create a new workspaces to take effect
+//      (https://cloud.bytedance.net/cloudide/environments/new)
+{
+    "extends": "python", // extends template
+    "additionalPackages": {
+        "apt": [],  // e.g.
+        // "apt": ["curl"],
+        "scm": [],  // e.g.
+        // "scm": [
+        //     {
+        //         "name": "inf/infsec/doas_client",
+        //         "link": {
+        //             "name": "/usr/local/bin/doas",
+        //             "target": "doas",
+        //         },
+        //     }
+        // ],
+        "pip": [],  // e.g.
+        // "pip": ["requests"],
+    },
+    // run on terminal when post create the container, will override template config
+    // "postCreateCommand": "",
+    "remoteEnv": {},  // environment variables, e.g.
+    // "remoteEnv": {"a": "b"},
+    "extensions": [],  // vscode extensions e.g.
+    // "extensions": ["byted-ide.demo-version"],
+    "settings": {},  // vscode settings e.g.
+    // "settings": { "editor.fontSize": 16 },
+}

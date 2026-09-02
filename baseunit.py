@@ -1,5 +1,7 @@
 import torch.nn as nn
 import torch
+import math
+from typing import Optional, Tuple
 
 class TowerUnit(nn.Module):
     def __init__(self, input_dim, hidden_dims=[], 
@@ -29,19 +31,20 @@ class TowerUnit(nn.Module):
 
         # hidden layers
         prev_dim = input_dim
-        for dim in hidden_dims:
-            linear_layer = nn.Linear(prev_dim, dim)
-            if use_xavier:
-                nn.init.xavier_uniform_(linear_layer.weight)
-                if linear_layer.bias is not None:
-                    nn.init.zeros_(linear_layer.bias)
-            layers.append(linear_layer)
-            if use_batch_norm:  
-                layers.append(nn.BatchNorm1d(dim))
-            layers.append(activation)
-            if use_dropout: 
-                layers.append(nn.Dropout(dropout_rate))
-            prev_dim = dim
+        if hidden_dims:
+            for dim in hidden_dims:
+                linear_layer = nn.Linear(prev_dim, dim)
+                if use_xavier:
+                    nn.init.xavier_uniform_(linear_layer.weight)
+                    if linear_layer.bias is not None:
+                        nn.init.zeros_(linear_layer.bias)
+                layers.append(linear_layer)
+                if use_batch_norm:  
+                    layers.append(nn.BatchNorm1d(dim))
+                layers.append(activation)
+                if use_dropout: 
+                    layers.append(nn.Dropout(dropout_rate))
+                prev_dim = dim
 
         # output layers
         if task == 'classification' :
@@ -85,37 +88,73 @@ class TowerUnit(nn.Module):
         return self.net(x)
 
 
-class SelfAttentionUnit(nn.Module):
+
+class UniAttentionUnit(nn.Module):
     """
-    Self-Attention unit for implementing self-attention mechanism.
-    
-    Args:
-        hidden_dim (int): Hidden layer dimension for Q, K, V transformations
+    Unified Attention with lazy-initialized Q/K/V Linear layers.
+    - self-attention: forward(x)               where Q=K=V=x
+    - cross-attention: forward(x_q, x_kv=...)  where Q=x_q, K=V=x_kv
+    Q_w/K_w/V_w will be created on first forward using input dims.
     """
-    def __init__(self, hidden_dim):
-        super().__init__()
-        self.Q_w = nn.Linear(in_features=hidden_dim, out_features=hidden_dim, bias=True)
-        self.K_w = nn.Linear(in_features=hidden_dim, out_features=hidden_dim, bias=True)
-        self.V_w = nn.Linear(in_features=hidden_dim, out_features=hidden_dim, bias=True)
-        self.softmax = nn.Softmax(dim=-1)
-        
-    def forward(self, x):
+    def __init__(self, out_dim: Optional[int] = None):
         """
-        Forward propagation with self-attention mechanism.
-        
         Args:
-            x (torch.Tensor): Input tensor [batch_size x seq_len x hidden_dim]
-            
-        Returns:
-            torch.Tensor: Output tensor [batch_size x seq_len x hidden_dim]
-            torch.Tensor: Attention weights [batch_size x seq_len x seq_len]
+            out_dim: output feature dim for Q/K/V. If None, uses input dim.
+                     For standard attention, out_dim == input_dim is fine.
         """
-        Q = self.Q_w(x)
-        K = self.K_w(x)
-        V = self.V_w(x)
-        attn_weights = Q.matmul(torch.transpose(K, 1, 2)) / (K.shape[-1] ** 0.5) # Calculate attention scores
-        attn_weights = self.softmax(torch.sigmoid(attn_weights))
-        outputs = attn_weights.matmul(V) # Apply attention weights
-        
+        super().__init__()
+        # Placeholders; real layers will be created at first forward
+        self.Q_w: Optional[nn.Linear] = None
+        self.K_w: Optional[nn.Linear] = None
+        self.V_w: Optional[nn.Linear] = None
+        self.out_dim = out_dim
+        self.softmax = nn.Softmax(dim=-1)
+
+    def _build_linears(self, d_q_in: int, d_kv_in: int, device, dtype):
+        # Decide output dims
+        d_q_out = self.out_dim or d_q_in
+        d_kv_out = self.out_dim or d_kv_in
+
+        # Build and move to correct device/dtype
+        self.Q_w = nn.Linear(d_q_in, d_q_out, bias=True).to(device=device, dtype=dtype)
+        self.K_w = nn.Linear(d_kv_in, d_kv_out, bias=True).to(device=device, dtype=dtype)
+        self.V_w = nn.Linear(d_kv_in, d_kv_out, bias=True).to(device=device, dtype=dtype)
+
+    def forward(
+        self,
+        x_q: torch.Tensor,
+        x_kv: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Args:
+            x_q:  (B, T_q, D_q) queries
+            x_kv: (B, T_k, D_kv) keys/values source. If None, use x_q (self-attn)
+        Returns:
+            outputs:       (B, T_q, D_out)
+            attn_weights:  (B, T_q, T_k)
+        """
+        if x_kv is None:
+            x_kv = x_q  # self-attention
+
+        B, T_q, D_q = x_q.shape
+        _, T_k, D_kv = x_kv.shape
+
+        # Lazy build on first call
+        if self.Q_w is None or self.K_w is None or self.V_w is None:
+            self._build_linears(D_q, D_kv, x_q.device, x_q.dtype)
+
+        Q = self.Q_w(x_q)      # (B, T_q, D_q_out)
+        K = self.K_w(x_kv)     # (B, T_k, D_kv_out)
+        V = self.V_w(x_kv)     # (B, T_k, D_kv_out)
+
+        # Require Q and K to have the same last dim for dot product
+        if Q.size(-1) != K.size(-1):
+            # Project K to Q's dim (or Q to K's dim), here we align K->Q
+            K = nn.functional.linear(K, torch.eye(K.size(-1), Q.size(-1), device=K.device, dtype=K.dtype))
+            # 或者更明确地增加一个适配层；为简洁起见此处用 F.linear+恒等映射占位
+
+        scores = torch.matmul(Q, K.transpose(1, 2)) / math.sqrt(Q.size(-1))  # (B, T_q, T_k)
+        attn_weights = self.softmax(scores)                                  # (B, T_q, T_k)
+        outputs = torch.matmul(attn_weights, V)                               # (B, T_q, D_kv_out)
         return outputs, attn_weights
 

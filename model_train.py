@@ -12,7 +12,7 @@ import pickle
 from torch.nn import *
 from urllib.parse import urlparse, urlunparse
 from pathlib import Path
-from uplifttree import *
+# from uplifttree import *
 from functools import partial
 from esn_tarnet import *
 from feature_select import *
@@ -20,9 +20,12 @@ from s_learner import *
 from t_learner import *
 from tarnet import *
 from dragonnet import *
+from m3tn import *
+from dnet import * 
+from efin import *
+from mtst import *
 from x_learner import *
 from descn import *
-from uplifttree import *
 from cfrnet import *
 import subprocess
 import json
@@ -190,6 +193,10 @@ except Exception as e:
     print(f"跳过：{e}")
 
 
+if task == 'classification' and model_type == 'dnet':
+    print("dnet不支持分类任务,退出运行")
+    import sys
+    sys.exit(0) 
 
 
 # In[ ]:
@@ -285,6 +292,37 @@ if not model_params:
             base_hidden_dims = [64,32,32,16],output_activation_base=None,
             share_hidden_func = torch.nn.ELU(),base_hidden_func = torch.nn.ELU()
         )
+    elif model_type == 'dnet':
+        model_params = dict(
+            embedding_dim=3,share_dim=128,
+            share_hidden_dims =[512,256,256,128],
+            base_hidden_dims=[64,32,32,16],base_share_dim=16,
+            ipw_hidden_dims=[64,32,32,16],output_activation_ipw=None,
+            quantiles = [0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9]
+        )
+    elif model_type == 'm3tn':
+        model_params = dict(
+            embedding_dim=3,expert_dim=128,
+            expert_hidden_dims =[[512,256,128],[512,256,128],[512,256,128],[512,256,128],[512,256,128]],expert_hidden_func = torch.nn.ELU(),
+            gate_hidden_dims =[[256],[256],[256],[256]],gate_hidden_func = torch.nn.ELU(),
+            base_hidden_dims=[128,64,64],output_activation_base=None,base_hidden_func = torch.nn.ELU()
+        )
+    elif model_type == 'efin':
+        model_params = dict(
+            embedding_dim=3,
+            base_hidden_dims=[256,128,64],base_hidden_func = torch.nn.ELU(),output_activation_base=None,
+            lift_hidden_dims=[256,128,64],lift_hidden_func = torch.nn.ELU(),output_activation_lift=None,
+            ipw_hidden_dims=[256,128,64],ipw_hidden_func = torch.nn.ELU(),output_activation_ipw=None,
+            attention_dim = 32
+        )
+    elif model_type == 'mtst':
+        model_params = dict(
+            embedding_dim=3,expert_dim=128,
+            expert_hidden_dims =[[512,256,128],[512,256,128],[512,256,128],[512,256,128],[512,256,128]],expert_hidden_func = torch.nn.ELU(),
+            gate_hidden_dims =[256],gate_hidden_func = torch.nn.ELU(),
+            base_hidden_dims=[128,64,64],output_activation_base=None,base_hidden_func = torch.nn.ELU(),
+            attention_dim = 32
+        )
     elif model_type == 'uplifttree':
         model_params = dict(
             max_depth=5
@@ -298,7 +336,7 @@ if not model_params:
             max_depth=5,n_estimators=100
         )
     else:
-        raise ValueError("model_type must be 'tarnet', 'cfrnet', 'esn_tarnet', 'slearner', 'tlearner', 'xlearner', 'descn', 'dragonnet', 'uplifttree','upliftforest','causalforestdml'")
+        raise ValueError("model_type must be 'mtst', 'efin', 'm3tn', 'dnet', 'tarnet', 'cfrnet', 'esn_tarnet', 'slearner', 'tlearner', 'xlearner', 'descn', 'dragonnet', 'uplifttree','upliftforest','causalforestdml'")
 
 
 # In[ ]:
@@ -360,6 +398,34 @@ elif model_type == 'cfrnet':
         **model_params
     ).to(device)
     loss_f = partial(cfrnet_loss)
+elif model_type == 'dnet':
+    model = Dnet(
+        input_dim=len(feature_list), discrete_size_cols=discrete_size_cols,
+        treatment_label_list=treatment_label_list,device=device,model_type = model_type,task=task,classi_nums=2,
+        **model_params
+    ).to(device)
+    loss_f = partial(dnet_loss)
+elif model_type == 'm3tn':
+    model = M3tn(
+        input_dim=len(feature_list), discrete_size_cols=discrete_size_cols,
+        treatment_label_list=treatment_label_list,device=device,model_type = model_type,task=task,classi_nums=2,
+        **model_params
+    ).to(device)
+    loss_f = partial(m3tn_loss)
+elif model_type == 'efin':
+    model = Efin(
+        input_dim=len(feature_list), discrete_size_cols=discrete_size_cols,
+        treatment_label_list=treatment_label_list,device=device,model_type = model_type,task=task,classi_nums=2,
+        **model_params
+    ).to(device)
+    loss_f = partial(efin_loss)
+elif model_type == 'mtst':
+    model = Mtst(
+        input_dim=len(feature_list), discrete_size_cols=discrete_size_cols,
+        treatment_label_list=treatment_label_list,device=device,model_type = model_type,task=task,classi_nums=2,
+        **model_params
+    ).to(device)
+    loss_f = partial(mtst_loss)
 elif model_type == 'uplifttree':
     model = UpliftTreeModel(task=task,model_type='tree',treatment_list=treatment_label_list,features_list=feature_list,**model_params)
 elif model_type == 'upliftforest':
@@ -367,7 +433,7 @@ elif model_type == 'upliftforest':
 elif model_type == 'causalforestdml':
     model = UpliftTreeModel(task=task,model_type='causalforestdml',treatment_list=treatment_label_list,features_list=feature_list,**model_params)
 else:
-    raise ValueError("model_type must be 'tarnet', 'cfrnet', 'esn_tarnet', 'slearner', 'tlearner', 'xlearner', 'descn', 'dragonnet', 'uplifttree','upliftforest','causalforestdml'")
+    raise ValueError("model_type must be 'mtst', 'efin', 'm3tn', 'dnet','tarnet', 'cfrnet', 'esn_tarnet', 'slearner', 'tlearner', 'xlearner', 'descn', 'dragonnet', 'uplifttree','upliftforest','causalforestdml'")
 
 
 # In[ ]:
@@ -416,7 +482,8 @@ else:
         loss_type=loss_type,
         treatment_label_list=treatment_label_list,
         checkpoint_path = model_save_path,
-        if_continued_train = 0
+        if_continued_train = 0,
+        quantiles = model_params['quantiles'] if "quantiles" in model_params.keys() else None
     )
 
 

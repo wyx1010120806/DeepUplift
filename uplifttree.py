@@ -3,7 +3,6 @@ from causalml.inference.tree import uplift_tree_string, uplift_tree_plot
 from IPython.display import Image
 from causalml.inference.tree.plot import plot_causal_tree
 import matplotlib.pyplot as plt
-<<<<<<< HEAD
 import pandas as pd
 from econml.dml import CausalForestDML
 import xgboost as xgb
@@ -11,17 +10,11 @@ from lightgbm import LGBMClassifier,LGBMRegressor
 
 class UpliftTreeModel():
     def __init__(self,task,model_type,treatment_list,features_list,**params):
-=======
-
-class UpliftTreeModel():
-    def __init__(self,task,model_type,treatment_list,features_list):
->>>>>>> 826c247f38bae0757a3143a60e371439b65cb42c
         self.task = task
         self.model_type = model_type
         self.treatment_list = treatment_list
         self.features_list = features_list
         self.model = None
-<<<<<<< HEAD
         self.params = params
         
     def fit(self,X,y,treatment):
@@ -44,22 +37,10 @@ class UpliftTreeModel():
                                              **self.params
                                              )
                 self.model.fit(X=X,Y=y,T=treatment)
-=======
-        
-    def fit(self,X,y,treatment):
-        if self.task == 'classification':
-            if self.model_type == 'tree':
-                self.model = UpliftTreeClassifier(control_name='0',max_depth=3)
-                self.model.fit(X=X,y=y,treatment=treatment)
-            elif self.model_type == 'forest':
-                self.model = UpliftRandomForestClassifier(control_name='0',max_depth=3,n_estimators=100)
-                self.model.fit(X=X,y=y,treatment=treatment)
->>>>>>> 826c247f38bae0757a3143a60e371439b65cb42c
             else:
                 raise ValueError("model_type must be 'tree' or 'forest'")
         elif self.task == 'regression' and len(self.treatment_list) == 2:
             if self.model_type == 'tree':
-<<<<<<< HEAD
                 self.model = CausalTreeRegressor(control_name='0',**self.params)
                 self.model.fit(X=X,y=y,treatment=treatment)
             elif self.model_type == 'forest':
@@ -112,42 +93,10 @@ class UpliftTreeModel():
                         raise ValueError("model_type must be 'tree' or 'forest'")
                     
                     self.model[treatment_name] = model
-=======
-                self.model = CausalTreeRegressor(control_name='0',max_depth=3)
-                self.model.fit(X=X,y=y,treatment=treatment)
-            elif self.model_type == 'forest':
-                self.model = CausalRandomForestRegressor(control_name=0,max_depth=3,n_estimators=100)
-                self.model.fit(X=X,y=y,treatment=treatment.astype(int))
-            else:
-                raise ValueError("model_type must be 'tree' or 'forest'")
-        elif self.task == 'regression' and len(self.treatment_list) > 2:
-            self.model = {}
-
-            for treatment_name in self.treatment_list:
-                if treatment_name == 0:
-                    continue
-
-                mask = (treatment == '0') | (treatment == str(treatment_name))   # 选择 treatment 为 0 或 1 的行
-                X_sub = X[mask]
-                y_sub = y[mask]
-                t_sub = treatment[mask]
-
-                if self.model_type == 'tree':
-                    model = CausalTreeRegressor(control_name='0',max_depth=3)
-                    model.fit(X=X_sub,y=y_sub,treatment=t_sub)
-                elif self.model_type == 'forest':
-                    model = CausalRandomForestRegressor(control_name=0,max_depth=3,n_estimators=100)
-                    model.fit(X=X_sub,y=y_sub,treatment=t_sub.astype(int))
-                else:
-                    raise ValueError("model_type must be 'tree' or 'forest'")
-                
-                self.model[treatment_name] = model
->>>>>>> 826c247f38bae0757a3143a60e371439b65cb42c
         else:
             raise ValueError("task must be 'regression' or 'classification'")
         
     def predict(self,X):
-<<<<<<< HEAD
         if self.model_type == 'causalforestdml':
             predictions = {}
             for each in self.treatment_list[1:]:
@@ -171,24 +120,13 @@ class UpliftTreeModel():
                     return pd.DataFrame(diff, columns=col_names)
                 else:
                     return pd.DataFrame(self.model.predict(X), columns=[1])
-=======
-        if len(self.treatment_list) == 2 or self.task == 'classification':
-            if self.task == 'classification' and self.model_type == 'forest':
-                return self.model.predict(X, full_output=True)
-            else:
-                return self.model.predict(X)
->>>>>>> 826c247f38bae0757a3143a60e371439b65cb42c
         else:
             predictions = {}
             for treatment_name in self.treatment_list:
                 if treatment_name == 0:
                     continue
                 predictions[treatment_name] = self.model[treatment_name].predict(X)
-<<<<<<< HEAD
             return  pd.DataFrame(predictions)
-=======
-            return predictions
->>>>>>> 826c247f38bae0757a3143a60e371439b65cb42c
     
     # def visualize(self):
     #     if len(self.treatment_list) == 2 or self.task == 'classification':
